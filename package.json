@@ -1,0 +1,12 @@
+{
+  "name": "keepalivebot",
+  "version": "1.0.0",
+  "main": "keepalive.js",
+  "scripts": {
+    "start": "node keepalive.js"
+  },
+  "dependencies": {
+    "mineflayer": "^4.20.0",
+    "express": "^4.18.2"
+  }
+}
