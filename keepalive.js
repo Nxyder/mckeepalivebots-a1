@@ -61,7 +61,12 @@ function startBot() {
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Health endpoint — hier pingt UptimeRobot naartoe
+// Simpele ping — geeft altijd 200 OK terug, geen body nodig
+app.get('/ping', (req, res) => {
+  res.status(200).send('OK');
+});
+
+// Bestaande health endpoint met bot-status
 app.get('/', (req, res) => {
   res.status(200).json({
     status: 'ok',
@@ -73,7 +78,8 @@ app.get('/', (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`[HTTP] Server draait op poort ${PORT}`);
-  console.log('[HTTP] UptimeRobot kan nu pingen naar je Render URL');
+  console.log(`[HTTP] Ping endpoint: http://localhost:${PORT}/ping`);
+  console.log('[HTTP] UptimeRobot kan nu pingen naar je Render URL + /ping');
 });
 
 // ============================================
