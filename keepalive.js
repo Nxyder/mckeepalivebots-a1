@@ -5,7 +5,7 @@ const express = require('express');
 // 1. MINECRAFT BOT CONFIGURATIE
 // ============================================
 const BOT_OPTIONS = {
-  host: 'odneflora.play.hosting',
+  host: 'theempiresmp.play.hosting',
   port: 25565,
   username: 'KeepAliveBot',
   version: '1.21.1',
