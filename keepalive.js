@@ -1,5 +1,6 @@
 const mineflayer = require('mineflayer');
 const express = require('express');
+const cors = require('cors');
 
 // ============================================
 // 1. CONFIGURATIE
@@ -22,8 +23,7 @@ let isBotOnline = false;
 // Opslag voor spelersdata
 const playerData = {
   currentlyOnline: new Set(),
-  history: [], // Slaat ALLES op, we filteren later op tijd
-  retentionDays: 7 // Bewaar data maximaal 7 dagen om geheugen te sparen
+  history: [], // Slaat alles op zolang de bot draait (tot Render herstart)
 };
 
 // ============================================
@@ -39,7 +39,6 @@ function startBot() {
     isBotOnline = true;
     reconnectDelay = 5000;
 
-    // Wacht 1 seconde na spawn voordat we auth commands sturen
     setTimeout(() => {
       console.log('[KeepAliveBot] Auth commando sturen...');
       bot.chat(`/register ${BOT_PASSWORD} ${BOT_PASSWORD}`);
@@ -49,7 +48,6 @@ function startBot() {
     }, 1000);
   });
 
-  // --- SPELER TRACKING EVENTS ---
   bot.on('playerJoined', (player) => {
     if (player.username !== bot.username) {
       playerData.currentlyOnline.add(player.username);
@@ -82,7 +80,6 @@ function startBot() {
     reconnectDelay = Math.min(reconnectDelay * 2, 60000);
   });
 
-  // Anti-AFK: kleine beweging of chat elke 45s
   setInterval(() => {
     if (bot && bot.entity && isBotOnline) {
       bot.setControlState('jump', true);
@@ -91,7 +88,6 @@ function startBot() {
   }, 45000);
 }
 
-// Hulpfunctie voor het opslaan van de geschiedenis
 function logPlayerAction(username, action) {
   const record = {
     player: username,
@@ -101,25 +97,41 @@ function logPlayerAction(username, action) {
   
   playerData.history.push(record);
   console.log(`[Tracking] ${username} ${action} de server.`);
-  
-  // Verwijder events die ouder zijn dan de retentionDays (7 dagen)
-  cleanupOldHistory();
 }
 
-function cleanupOldHistory() {
+// Hulpfunctie om statistieken te berekenen voor een specifieke periode
+function calculateStats(daysBack) {
   const cutoffDate = new Date();
-  cutoffDate.setDate(cutoffDate.getDate() - playerData.retentionDays);
+  cutoffDate.setDate(cutoffDate.getDate() - daysBack);
   
-  // Filter de array: behoud alleen records nieuwer dan cutoffDate
-  playerData.history = playerData.history.filter(record => {
-    return new Date(record.time) > cutoffDate;
+  const stats = {};
+  
+  // Filter de history voor de specifieke periode
+  const filteredHistory = playerData.history.filter(r => new Date(r.time) > cutoffDate);
+  
+  filteredHistory.forEach(record => {
+    if (!stats[record.player]) {
+      stats[record.player] = { totalJoins: 0, totalLeaves: 0, lastSeen: record.time };
+    }
+    if (record.action === 'joined') stats[record.player].totalJoins++;
+    if (record.action === 'left') stats[record.player].totalLeaves++;
+    
+    if (new Date(record.time) > new Date(stats[record.player].lastSeen)) {
+      stats[record.player].lastSeen = record.time;
+    }
   });
+  
+  return { filteredHistory, stats };
 }
 
 // ============================================
 // 3. HTTP SERVER
 // ============================================
 const app = express();
+
+// Zet CORS open zodat je frontend (of andere websites) dit endpoint mag aanroepen
+app.use(cors()); 
+
 const PORT = process.env.PORT || 3000;
 
 app.get('/ping', (req, res) => {
@@ -137,30 +149,26 @@ app.get('/', (req, res) => {
 
 // --- HET VERBETERDE /PLAYERS ENDPOINT ---
 app.get('/players', (req, res) => {
-  // 1. Haal LIVE spelers op uit de bot (de tab-lijst op dit exacte moment)
+  // 1. Haal LIVE spelers op uit de bot
   let livePlayers = [];
   if (bot && isBotOnline && bot.players) {
     livePlayers = Object.keys(bot.players).filter(name => name !== bot.username);
   }
 
-  // 2. Groepeer de geschiedenis voor een mooi overzicht per speler
-  const playerStats = {};
-  
+  // 2. Bereken de statistieken voor Week, Maand en All-Time
+  const weeklyData = calculateStats(7);
+  const monthlyData = calculateStats(30);
+  // All-time is simpelweg alles wat in het history array staat
+  const allTimeStats = {};
   playerData.history.forEach(record => {
-    if (!playerStats[record.player]) {
-      playerStats[record.player] = {
-        totalJoins: 0,
-        totalLeaves: 0,
-        lastSeen: record.time
-      };
+    if (!allTimeStats[record.player]) {
+      allTimeStats[record.player] = { totalJoins: 0, totalLeaves: 0, lastSeen: record.time };
     }
+    if (record.action === 'joined') allTimeStats[record.player].totalJoins++;
+    if (record.action === 'left') allTimeStats[record.player].totalLeaves++;
     
-    if (record.action === 'joined') playerStats[record.player].totalJoins++;
-    if (record.action === 'left') playerStats[record.player].totalLeaves++;
-    
-    // Update lastSeen naar de meest recente actie
-    if (new Date(record.time) > new Date(playerStats[record.player].lastSeen)) {
-      playerStats[record.player].lastSeen = record.time;
+    if (new Date(record.time) > new Date(allTimeStats[record.player].lastSeen)) {
+      allTimeStats[record.player].lastSeen = record.time;
     }
   });
 
@@ -171,8 +179,20 @@ app.get('/players', (req, res) => {
       onlineCount: livePlayers.length,
       onlinePlayers: livePlayers
     },
-    weeklyStats: playerStats,
-    rawHistory: playerData.history // Optioneel: de complete lijst met join/leave events
+    history: {
+      weekly: {
+        stats: weeklyData.stats,
+        rawEvents: weeklyData.filteredHistory
+      },
+      monthly: {
+        stats: monthlyData.stats,
+        rawEvents: monthlyData.filteredHistory
+      },
+      allTime: {
+        stats: allTimeStats,
+        rawEvents: playerData.history // Alles sinds de laatste server/bot restart
+      }
+    }
   });
 });
 
