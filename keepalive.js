@@ -9,7 +9,7 @@ const BOT_OPTIONS = {
   port: 25565,
   username: 'KeepAliveBot',
   version: '1.21.1',
-  // Voeg hier eventueel auth: 'microsoft' toe als het een premium account is
+  // auth: 'microsoft', // Uncomment als het een premium account is
 };
 
 // VUL HIER JE WACHTWOORD IN
@@ -19,11 +19,11 @@ let bot;
 let reconnectDelay = 5000;
 let isBotOnline = false;
 
-// Opslag voor spelersdata (Efficient: alleen huidige online + history array)
+// Opslag voor spelersdata
 const playerData = {
-  currentlyOnline: new Set(), // Set is sneller en voorkomt duplicaten
-  history: [], // Array met { player, action, time }
-  maxHistoryLength: 100 // Voorkomt dat geheugen volloopt
+  currentlyOnline: new Set(),
+  history: [], // Slaat ALLES op, we filteren later op tijd
+  retentionDays: 7 // Bewaar data maximaal 7 dagen om geheugen te sparen
 };
 
 // ============================================
@@ -42,12 +42,10 @@ function startBot() {
     // Wacht 1 seconde na spawn voordat we auth commands sturen
     setTimeout(() => {
       console.log('[KeepAliveBot] Auth commando sturen...');
-      // We sturen zowel register als login. 
-      // Meestal pakt de server degene die nodig is (als je al geregistreerd bent, faalt register en werkt login).
       bot.chat(`/register ${BOT_PASSWORD} ${BOT_PASSWORD}`);
       setTimeout(() => {
         bot.chat(`/login ${BOT_PASSWORD}`);
-      }, 1000); // 1 seconde later proberen in te loggen
+      }, 1000);
     }, 1000);
   });
 
@@ -79,7 +77,7 @@ function startBot() {
   bot.on('end', (reason) => {
     console.log(`[KeepAliveBot] Disconnect (${reason}), reconnect in ${reconnectDelay / 1000}s`);
     isBotOnline = false;
-    playerData.currentlyOnline.clear(); // Reset bij disconnect
+    playerData.currentlyOnline.clear(); 
     setTimeout(startBot, reconnectDelay);
     reconnectDelay = Math.min(reconnectDelay * 2, 60000);
   });
@@ -87,7 +85,6 @@ function startBot() {
   // Anti-AFK: kleine beweging of chat elke 45s
   setInterval(() => {
     if (bot && bot.entity && isBotOnline) {
-      // Soms is springen niet genoeg tegen AFK plugins, chat is veiliger
       bot.setControlState('jump', true);
       setTimeout(() => bot.setControlState('jump', false), 100);
     }
@@ -101,27 +98,34 @@ function logPlayerAction(username, action) {
     action: action,
     time: new Date().toISOString()
   };
-  playerData.history.push(record);
   
-  // Houd de history array kort (bijv. laatste 100 events)
-  if (playerData.history.length > playerData.maxHistoryLength) {
-    playerData.history.shift(); 
-  }
+  playerData.history.push(record);
   console.log(`[Tracking] ${username} ${action} de server.`);
+  
+  // Verwijder events die ouder zijn dan de retentionDays (7 dagen)
+  cleanupOldHistory();
+}
+
+function cleanupOldHistory() {
+  const cutoffDate = new Date();
+  cutoffDate.setDate(cutoffDate.getDate() - playerData.retentionDays);
+  
+  // Filter de array: behoud alleen records nieuwer dan cutoffDate
+  playerData.history = playerData.history.filter(record => {
+    return new Date(record.time) > cutoffDate;
+  });
 }
 
 // ============================================
-// 3. HTTP SERVER (voor Render + UptimeRobot)
+// 3. HTTP SERVER
 // ============================================
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Simpele ping — geeft altijd 200 OK terug
 app.get('/ping', (req, res) => {
   res.status(200).send('OK');
 });
 
-// Bestaande health endpoint
 app.get('/', (req, res) => {
   res.status(200).json({
     status: 'ok',
@@ -131,12 +135,44 @@ app.get('/', (req, res) => {
   });
 });
 
-// NIEUW: Endpoint voor spelersdata
+// --- HET VERBETERDE /PLAYERS ENDPOINT ---
 app.get('/players', (req, res) => {
+  // 1. Haal LIVE spelers op uit de bot (de tab-lijst op dit exacte moment)
+  let livePlayers = [];
+  if (bot && isBotOnline && bot.players) {
+    livePlayers = Object.keys(bot.players).filter(name => name !== bot.username);
+  }
+
+  // 2. Groepeer de geschiedenis voor een mooi overzicht per speler
+  const playerStats = {};
+  
+  playerData.history.forEach(record => {
+    if (!playerStats[record.player]) {
+      playerStats[record.player] = {
+        totalJoins: 0,
+        totalLeaves: 0,
+        lastSeen: record.time
+      };
+    }
+    
+    if (record.action === 'joined') playerStats[record.player].totalJoins++;
+    if (record.action === 'left') playerStats[record.player].totalLeaves++;
+    
+    // Update lastSeen naar de meest recente actie
+    if (new Date(record.time) > new Date(playerStats[record.player].lastSeen)) {
+      playerStats[record.player].lastSeen = record.time;
+    }
+  });
+
+  // 3. Stuur alles terug
   res.status(200).json({
-    onlineCount: playerData.currentlyOnline.size,
-    onlinePlayers: Array.from(playerData.currentlyOnline), // Zet Set om naar Array voor JSON
-    recentHistory: playerData.history
+    success: true,
+    liveData: {
+      onlineCount: livePlayers.length,
+      onlinePlayers: livePlayers
+    },
+    weeklyStats: playerStats,
+    rawHistory: playerData.history // Optioneel: de complete lijst met join/leave events
   });
 });
 
