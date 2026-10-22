@@ -14,7 +14,7 @@ const BOT_OPTIONS = {
 };
 
 // VUL HIER JE WACHTWOORD IN
-const BOT_PASSWORD = '<passKeepAliveBot>'; 
+const BOT_PASSWORD = '<passKeepAlieBot>'; 
 
 let bot;
 let reconnectDelay = 5000;
