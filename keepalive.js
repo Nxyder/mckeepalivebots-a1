@@ -6,9 +6,9 @@ const cors = require('cors');
 // 1. CONFIGURATIE
 // ============================================
 const BOT_OPTIONS = {
-  host: 'theempiresmp.play.hosting',
+  host: 'solarsmp.play.hosting',
   port: 25565,
-  username: 'KeepAliveBot',
+  username: 'Solar_Bot',
   version: '1.21.1',
   // auth: 'microsoft', // Uncomment als het een premium account is
 };
