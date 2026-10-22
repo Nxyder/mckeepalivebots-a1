@@ -6,7 +6,7 @@ const cors = require('cors');
 // 1. CONFIGURATIE
 // ============================================
 const BOT_OPTIONS = {
-  host: 'solarsmp.play.hosting',
+  host: 'solar-smp.play.hosting',
   port: 25565,
   username: 'Solar_Bot',
   version: '1.21.1',
