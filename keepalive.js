@@ -80,12 +80,7 @@ function startBot() {
     reconnectDelay = Math.min(reconnectDelay * 2, 60000);
   });
 
-  setInterval(() => {
-    if (bot && bot.entity && isBotOnline) {
-      bot.setControlState('jump', true);
-      setTimeout(() => bot.setControlState('jump', false), 100);
-    }
-  }, 45000);
+  // ❌ HET SETINTERVAL VOOR SPRINGEN IS HIER VERWIJDERD
 }
 
 function logPlayerAction(username, action) {
