@@ -3,106 +3,127 @@ const express = require('express');
 const cors = require('cors');
 
 // ============================================
-// 1. CONFIGURATIE
+// 1. CONFIGURATIE (Meerdere bots via een array)
 // ============================================
-const BOT_OPTIONS = {
-  host: 'solar-smp.play.hosting',
-  port: 25565,
-  username: 'Solar_Bot',
-  version: '1.21.1',
-  // auth: 'microsoft', // Uncomment als het een premium account is
-};
+const BOTS_CONFIG = [
+  {
+    name: 'Solar_Bot',
+    options: {
+      host: 'solar-smp.play.hosting',
+      port: 25565,
+      username: 'Solar_Bot',
+      version: '1.21.1',
+    },
+    password: '<passKeepAliveBot1>'
+  },
+  {
+    name: 'Empire_Bot',
+    options: {
+      host: 'theempiresmp.play.hosting',
+      port: 25565,
+      username: 'Empire_Bot',
+      version: '1.21.1',
+    },
+    password: '<passKeepAliveBot2>'
+  }
+];
 
-// VUL HIER JE WACHTWOORD IN
-const BOT_PASSWORD = '<passKeepAliveBot>'; 
+// Object om per bot de status en data bij te houden
+const botsData = {};
 
-let bot;
-let reconnectDelay = 5000;
-let isBotOnline = false;
-
-// Opslag voor spelersdata
-const playerData = {
-  currentlyOnline: new Set(),
-  history: [], // Slaat alles op zolang de bot draait (tot Render herstart)
-};
+// Initialiseer de data-structuur per bot op basis van de config
+BOTS_CONFIG.forEach(config => {
+  botsData[config.name] = {
+    botInstance: null,
+    isOnline: false,
+    reconnectDelay: 5000,
+    playerData: {
+      currentlyOnline: new Set(),
+      history: [],
+    }
+  };
+});
 
 // ============================================
 // 2. BOT LOGICA
 // ============================================
-function startBot() {
-  console.log('[KeepAliveBot] Verbinden met server...');
+function startBot(config) {
+  const botName = config.name;
+  const botData = botsData[botName];
 
-  bot = mineflayer.createBot(BOT_OPTIONS);
+  console.log(`[${botName}] Verbinden met ${config.options.host}...`);
+
+  botData.botInstance = mineflayer.createBot(config.options);
+  const bot = botData.botInstance;
 
   bot.once('spawn', () => {
-    console.log('[KeepAliveBot] ✅ Ingelogd en gespawned');
-    isBotOnline = true;
-    reconnectDelay = 5000;
+    console.log(`[${botName}] ✅ Ingelogd en gespawned`);
+    botData.isOnline = true;
+    botData.reconnectDelay = 5000;
 
-    setTimeout(() => {
-      console.log('[KeepAliveBot] Auth commando sturen...');
-      bot.chat(`/register ${BOT_PASSWORD} ${BOT_PASSWORD}`);
+    if (config.password) {
       setTimeout(() => {
-        bot.chat(`/login ${BOT_PASSWORD}`);
+        console.log(`[${botName}] Auth commando sturen...`);
+        bot.chat(`/register ${config.password} ${config.password}`);
+        setTimeout(() => {
+          bot.chat(`/login ${config.password}`);
+        }, 1000);
       }, 1000);
-    }, 1000);
+    }
   });
 
   bot.on('playerJoined', (player) => {
     if (player.username !== bot.username) {
-      playerData.currentlyOnline.add(player.username);
-      logPlayerAction(player.username, 'joined');
+      botData.playerData.currentlyOnline.add(player.username);
+      logPlayerAction(botName, player.username, 'joined');
     }
   });
 
   bot.on('playerLeft', (player) => {
     if (player.username !== bot.username) {
-      playerData.currentlyOnline.delete(player.username);
-      logPlayerAction(player.username, 'left');
+      botData.playerData.currentlyOnline.delete(player.username);
+      logPlayerAction(botName, player.username, 'left');
     }
   });
 
   bot.on('kicked', (reason) => {
-    console.log('[KeepAliveBot] ❌ Gekickt:', reason);
-    isBotOnline = false;
+    console.log(`[${botName}] ❌ Gekickt:`, reason);
+    botData.isOnline = false;
   });
 
   bot.on('error', (err) => {
-    console.log('[KeepAliveBot] ⚠️ Error:', err.message);
-    isBotOnline = false;
+    console.log(`[${botName}] ⚠️ Error:`, err.message);
+    botData.isOnline = false;
   });
 
   bot.on('end', (reason) => {
-    console.log(`[KeepAliveBot] Disconnect (${reason}), reconnect in ${reconnectDelay / 1000}s`);
-    isBotOnline = false;
-    playerData.currentlyOnline.clear(); 
-    setTimeout(startBot, reconnectDelay);
-    reconnectDelay = Math.min(reconnectDelay * 2, 60000);
+    console.log(`[${botName}] Disconnect (${reason}), reconnect in ${botData.reconnectDelay / 1000}s`);
+    botData.isOnline = false;
+    botData.playerData.currentlyOnline.clear(); 
+    setTimeout(() => startBot(config), botData.reconnectDelay);
+    botData.reconnectDelay = Math.min(botData.reconnectDelay * 2, 60000);
   });
-
-  // ❌ HET SETINTERVAL VOOR SPRINGEN IS HIER VERWIJDERD
 }
 
-function logPlayerAction(username, action) {
+function logPlayerAction(botName, username, action) {
   const record = {
     player: username,
     action: action,
     time: new Date().toISOString()
   };
   
-  playerData.history.push(record);
-  console.log(`[Tracking] ${username} ${action} de server.`);
+  botsData[botName].playerData.history.push(record);
+  console.log(`[Tracking][${botName}] ${username} ${action} de server.`);
 }
 
-// Hulpfunctie om statistieken te berekenen voor een specifieke periode
-function calculateStats(daysBack) {
+// Hulpfunctie om statistieken te berekenen voor een specifieke bot en periode
+function calculateStats(botName, daysBack) {
   const cutoffDate = new Date();
   cutoffDate.setDate(cutoffDate.getDate() - daysBack);
   
   const stats = {};
-  
-  // Filter de history voor de specifieke periode
-  const filteredHistory = playerData.history.filter(r => new Date(r.time) > cutoffDate);
+  const history = botsData[botName].playerData.history;
+  const filteredHistory = history.filter(r => new Date(r.time) > cutoffDate);
   
   filteredHistory.forEach(record => {
     if (!stats[record.player]) {
@@ -123,8 +144,6 @@ function calculateStats(daysBack) {
 // 3. HTTP SERVER
 // ============================================
 const app = express();
-
-// Zet CORS open zodat je frontend (of andere websites) dit endpoint mag aanroepen
 app.use(cors()); 
 
 const PORT = process.env.PORT || 3000;
@@ -134,69 +153,92 @@ app.get('/ping', (req, res) => {
 });
 
 app.get('/', (req, res) => {
+  const statusOverview = {};
+  BOTS_CONFIG.forEach(config => {
+    const data = botsData[config.name];
+    statusOverview[config.name] = {
+      host: config.options.host,
+      bot: data.isOnline ? 'online' : 'offline'
+    };
+  });
+
   res.status(200).json({
     status: 'ok',
-    bot: isBotOnline ? 'online' : 'offline',
     timestamp: new Date().toISOString(),
     uptime: process.uptime(),
+    bots: statusOverview
   });
 });
 
-// --- HET VERBETERDE /PLAYERS ENDPOINT ---
+// --- UPDATED /PLAYERS ENDPOINT VOOR ALLE BOTS ---
 app.get('/players', (req, res) => {
-  // 1. Haal LIVE spelers op uit de bot
-  let livePlayers = [];
-  if (bot && isBotOnline && bot.players) {
-    livePlayers = Object.keys(bot.players).filter(name => name !== bot.username);
-  }
+  const responseData = {};
 
-  // 2. Bereken de statistieken voor Week, Maand en All-Time
-  const weeklyData = calculateStats(7);
-  const monthlyData = calculateStats(30);
-  // All-time is simpelweg alles wat in het history array staat
-  const allTimeStats = {};
-  playerData.history.forEach(record => {
-    if (!allTimeStats[record.player]) {
-      allTimeStats[record.player] = { totalJoins: 0, totalLeaves: 0, lastSeen: record.time };
+  BOTS_CONFIG.forEach(config => {
+    const botName = config.name;
+    const data = botsData[botName];
+    const bot = data.botInstance;
+
+    // 1. Haal LIVE spelers op uit de bot
+    let livePlayers = [];
+    if (bot && data.isOnline && bot.players) {
+      livePlayers = Object.keys(bot.players).filter(name => name !== bot.username);
     }
-    if (record.action === 'joined') allTimeStats[record.player].totalJoins++;
-    if (record.action === 'left') allTimeStats[record.player].totalLeaves++;
+
+    // 2. Bereken statistieken
+    const weeklyData = calculateStats(botName, 7);
+    const monthlyData = calculateStats(botName, 30);
     
-    if (new Date(record.time) > new Date(allTimeStats[record.player].lastSeen)) {
-      allTimeStats[record.player].lastSeen = record.time;
-    }
+    const allTimeStats = {};
+    data.playerData.history.forEach(record => {
+      if (!allTimeStats[record.player]) {
+        allTimeStats[record.player] = { totalJoins: 0, totalLeaves: 0, lastSeen: record.time };
+      }
+      if (record.action === 'joined') allTimeStats[record.player].totalJoins++;
+      if (record.action === 'left') allTimeStats[record.player].totalLeaves++;
+      
+      if (new Date(record.time) > new Date(allTimeStats[record.player].lastSeen)) {
+        allTimeStats[record.player].lastSeen = record.time;
+      }
+    });
+
+    responseData[botName] = {
+      server: config.options.host,
+      liveData: {
+        onlineCount: livePlayers.length,
+        onlinePlayers: livePlayers
+      },
+      history: {
+        weekly: {
+          stats: weeklyData.stats,
+          rawEvents: weeklyData.filteredHistory
+        },
+        monthly: {
+          stats: monthlyData.stats,
+          rawEvents: monthlyData.filteredHistory
+        },
+        allTime: {
+          stats: allTimeStats,
+          rawEvents: data.playerData.history
+        }
+      }
+    };
   });
 
-  // 3. Stuur alles terug
   res.status(200).json({
     success: true,
-    liveData: {
-      onlineCount: livePlayers.length,
-      onlinePlayers: livePlayers
-    },
-    history: {
-      weekly: {
-        stats: weeklyData.stats,
-        rawEvents: weeklyData.filteredHistory
-      },
-      monthly: {
-        stats: monthlyData.stats,
-        rawEvents: monthlyData.filteredHistory
-      },
-      allTime: {
-        stats: allTimeStats,
-        rawEvents: playerData.history // Alles sinds de laatste server/bot restart
-      }
-    }
+    bots: responseData
   });
 });
 
 app.listen(PORT, () => {
   console.log(`[HTTP] Server draait op poort ${PORT}`);
-  console.log(`[HTTP] Spelers data beschikbaar op: http://localhost:${PORT}/players`);
+  console.log(`[HTTP] Alle bots data beschikbaar op: http://localhost:${PORT}/players`);
 });
 
 // ============================================
-// 4. START
+// 4. START ALLE BOTS
 // ============================================
-startBot();
+BOTS_CONFIG.forEach(config => {
+  startBot(config);
+});
