@@ -6,7 +6,10 @@ const cors = require('cors');
 // 1. CONFIGURATIE BOT 1 (Solar_Bot)
 // ============================================
 const BOT_1_OPTIONS = {
-
+  host: 'solar-smp.play.hosting',
+  port: 25565,
+  username: 'Solar_Bot',
+  version: '1.21.1',
 };
 const BOT_1_PASSWORD = '<passKeepAliveBot>';
 
@@ -23,7 +26,10 @@ const bot1PlayerData = {
 // 2. CONFIGURATIE BOT 2 (Empire_Bot)
 // ============================================
 const BOT_2_OPTIONS = {
-
+  host: 'theempiresmp.play.hosting',
+  port: 25565,
+  username: 'The_Empire_Bot',
+  version: '1.21.1',
 };
 const BOT_2_PASSWORD = '<passKeepAliveBot>';
 
