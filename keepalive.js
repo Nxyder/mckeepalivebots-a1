@@ -3,127 +3,186 @@ const express = require('express');
 const cors = require('cors');
 
 // ============================================
-// 1. CONFIGURATIE (Meerdere bots via een array)
+// 1. CONFIGURATIE BOT 1 (Solar_Bot)
 // ============================================
-const BOTS_CONFIG = [
-  {
-    name: 'Solar_Bot',
-    options: {
-      host: 'solar-smp.play.hosting',
-      port: 25565,
-      username: 'Solar_Bot',
-      version: '1.21.1',
-    },
-    password: '<passKeepAliveBot1>'
-  },
-  {
-    name: 'Empire_Bot',
-    options: {
-      host: 'theempiresmp.play.hosting',
-      port: 25565,
-      username: 'Empire_Bot',
-      version: '1.21.1',
-    },
-    password: '<passKeepAliveBot2>'
-  }
-];
+const BOT_1_OPTIONS = {
+  host: 'solar-smp.play.hosting',
+  port: 25565,
+  username: 'Solar_Bot',
+  version: '1.21.1',
+};
+const BOT_1_PASSWORD = '<passKeepAliveBot>';
 
-// Object om per bot de status en data bij te houden
-const botsData = {};
+let bot1 = null;
+let isBot1Online = false;
+let reconnectDelay1 = 5000;
 
-// Initialiseer de data-structuur per bot op basis van de config
-BOTS_CONFIG.forEach(config => {
-  botsData[config.name] = {
-    botInstance: null,
-    isOnline: false,
-    reconnectDelay: 5000,
-    playerData: {
-      currentlyOnline: new Set(),
-      history: [],
-    }
-  };
-});
+const bot1PlayerData = {
+  currentlyOnline: new Set(),
+  history: [],
+};
 
 // ============================================
-// 2. BOT LOGICA
+// 2. CONFIGURATIE BOT 2 (Empire_Bot)
 // ============================================
-function startBot(config) {
-  const botName = config.name;
-  const botData = botsData[botName];
+const BOT_2_OPTIONS = {
+  host: 'theempiresmp.play.hosting',
+  port: 25565,
+  username: 'The_Empire_Bot',
+  version: '1.21.1',
+};
+const BOT_2_PASSWORD = '<passKeepAliveBot>';
 
-  console.log(`[${botName}] Verbinden met ${config.options.host}...`);
+let bot2 = null;
+let isBot2Online = false;
+let reconnectDelay2 = 5000;
 
-  botData.botInstance = mineflayer.createBot(config.options);
-  const bot = botData.botInstance;
+const bot2PlayerData = {
+  currentlyOnline: new Set(),
+  history: [],
+};
 
-  bot.once('spawn', () => {
-    console.log(`[${botName}] ✅ Ingelogd en gespawned`);
-    botData.isOnline = true;
-    botData.reconnectDelay = 5000;
+// ============================================
+// 3. LOGICA VOOR BOT 1
+// ============================================
+function startBot1() {
+  console.log(`[Solar_Bot] Verbinden met ${BOT_1_OPTIONS.host}...`);
 
-    if (config.password) {
+  bot1 = mineflayer.createBot(BOT_1_OPTIONS);
+
+  bot1.once('spawn', () => {
+    console.log('[Solar_Bot] ✅ Ingelogd en gespawned');
+    isBot1Online = true;
+    reconnectDelay1 = 5000;
+
+    if (BOT_1_PASSWORD) {
       setTimeout(() => {
-        console.log(`[${botName}] Auth commando sturen...`);
-        bot.chat(`/register ${config.password} ${config.password}`);
+        console.log('[Solar_Bot] Auth commando sturen...');
+        bot1.chat(`/register ${BOT_1_PASSWORD} ${BOT_1_PASSWORD}`);
         setTimeout(() => {
-          bot.chat(`/login ${config.password}`);
+          bot1.chat(`/login ${BOT_1_PASSWORD}`);
         }, 1000);
       }, 1000);
     }
   });
 
-  bot.on('playerJoined', (player) => {
-    if (player.username !== bot.username) {
-      botData.playerData.currentlyOnline.add(player.username);
-      logPlayerAction(botName, player.username, 'joined');
+  bot1.on('playerJoined', (player) => {
+    if (player.username !== bot1.username) {
+      bot1PlayerData.currentlyOnline.add(player.username);
+      logPlayerAction1(player.username, 'joined');
     }
   });
 
-  bot.on('playerLeft', (player) => {
-    if (player.username !== bot.username) {
-      botData.playerData.currentlyOnline.delete(player.username);
-      logPlayerAction(botName, player.username, 'left');
+  bot1.on('playerLeft', (player) => {
+    if (player.username !== bot1.username) {
+      bot1PlayerData.currentlyOnline.delete(player.username);
+      logPlayerAction1(player.username, 'left');
     }
   });
 
-  bot.on('kicked', (reason) => {
-    console.log(`[${botName}] ❌ Gekickt:`, reason);
-    botData.isOnline = false;
+  bot1.on('kicked', (reason) => {
+    console.log('[Solar_Bot] ❌ Gekickt:', reason);
+    isBot1Online = false;
   });
 
-  bot.on('error', (err) => {
-    console.log(`[${botName}] ⚠️ Error:`, err.message);
-    botData.isOnline = false;
+  bot1.on('error', (err) => {
+    console.log('[Solar_Bot] ⚠️ Error:', err.message);
+    isBot1Online = false;
   });
 
-  bot.on('end', (reason) => {
-    console.log(`[${botName}] Disconnect (${reason}), reconnect in ${botData.reconnectDelay / 1000}s`);
-    botData.isOnline = false;
-    botData.playerData.currentlyOnline.clear(); 
-    setTimeout(() => startBot(config), botData.reconnectDelay);
-    botData.reconnectDelay = Math.min(botData.reconnectDelay * 2, 60000);
+  bot1.on('end', (reason) => {
+    console.log(`[Solar_Bot] Disconnect (${reason}), reconnect in ${reconnectDelay1 / 1000}s`);
+    isBot1Online = false;
+    bot1PlayerData.currentlyOnline.clear(); 
+    setTimeout(startBot1, reconnectDelay1);
+    reconnectDelay1 = Math.min(reconnectDelay1 * 2, 60000);
   });
 }
 
-function logPlayerAction(botName, username, action) {
+function logPlayerAction1(username, action) {
   const record = {
     player: username,
     action: action,
     time: new Date().toISOString()
   };
-  
-  botsData[botName].playerData.history.push(record);
-  console.log(`[Tracking][${botName}] ${username} ${action} de server.`);
+  bot1PlayerData.history.push(record);
+  console.log(`[Tracking][Solar_Bot] ${username} ${action} de server.`);
 }
 
-// Hulpfunctie om statistieken te berekenen voor een specifieke bot en periode
-function calculateStats(botName, daysBack) {
+// ============================================
+// 4. LOGICA VOOR BOT 2
+// ============================================
+function startBot2() {
+  console.log(`[Empire_Bot] Verbinden met ${BOT_2_OPTIONS.host}...`);
+
+  bot2 = mineflayer.createBot(BOT_2_OPTIONS);
+
+  bot2.once('spawn', () => {
+    console.log('[Empire_Bot] ✅ Ingelogd en gespawned');
+    isBot2Online = true;
+    reconnectDelay2 = 5000;
+
+    if (BOT_2_PASSWORD) {
+      setTimeout(() => {
+        console.log('[Empire_Bot] Auth commando sturen...');
+        bot2.chat(`/register ${BOT_2_PASSWORD} ${BOT_2_PASSWORD}`);
+        setTimeout(() => {
+          bot2.chat(`/login ${BOT_2_PASSWORD}`);
+        }, 1000);
+      }, 1000);
+    }
+  });
+
+  bot2.on('playerJoined', (player) => {
+    if (player.username !== bot2.username) {
+      bot2PlayerData.currentlyOnline.add(player.username);
+      logPlayerAction2(player.username, 'joined');
+    }
+  });
+
+  bot2.on('playerLeft', (player) => {
+    if (player.username !== bot2.username) {
+      bot2PlayerData.currentlyOnline.delete(player.username);
+      logPlayerAction2(player.username, 'left');
+    }
+  });
+
+  bot2.on('kicked', (reason) => {
+    console.log('[Empire_Bot] ❌ Gekickt:', reason);
+    isBot2Online = false;
+  });
+
+  bot2.on('error', (err) => {
+    console.log('[Empire_Bot] ⚠️ Error:', err.message);
+    isBot2Online = false;
+  });
+
+  bot2.on('end', (reason) => {
+    console.log(`[Empire_Bot] Disconnect (${reason}), reconnect in ${reconnectDelay2 / 1000}s`);
+    isBot2Online = false;
+    bot2PlayerData.currentlyOnline.clear(); 
+    setTimeout(startBot2, reconnectDelay2);
+    reconnectDelay2 = Math.min(reconnectDelay2 * 2, 60000);
+  });
+}
+
+function logPlayerAction2(username, action) {
+  const record = {
+    player: username,
+    action: action,
+    time: new Date().toISOString()
+  };
+  bot2PlayerData.history.push(record);
+  console.log(`[Tracking][Empire_Bot] ${username} ${action} de server.`);
+}
+
+// Algemene hulpfunctie voor statistieken
+function calculateStats(historyArray, daysBack) {
   const cutoffDate = new Date();
   cutoffDate.setDate(cutoffDate.getDate() - daysBack);
   
   const stats = {};
-  const history = botsData[botName].playerData.history;
-  const filteredHistory = history.filter(r => new Date(r.time) > cutoffDate);
+  const filteredHistory = historyArray.filter(r => new Date(r.time) > cutoffDate);
   
   filteredHistory.forEach(record => {
     if (!stats[record.player]) {
@@ -141,7 +200,7 @@ function calculateStats(botName, daysBack) {
 }
 
 // ============================================
-// 3. HTTP SERVER
+// 5. HTTP SERVER
 // ============================================
 const app = express();
 app.use(cors()); 
@@ -153,81 +212,90 @@ app.get('/ping', (req, res) => {
 });
 
 app.get('/', (req, res) => {
-  const statusOverview = {};
-  BOTS_CONFIG.forEach(config => {
-    const data = botsData[config.name];
-    statusOverview[config.name] = {
-      host: config.options.host,
-      bot: data.isOnline ? 'online' : 'offline'
-    };
-  });
-
   res.status(200).json({
     status: 'ok',
     timestamp: new Date().toISOString(),
     uptime: process.uptime(),
-    bots: statusOverview
+    bots: {
+      Solar_Bot: {
+        host: BOT_1_OPTIONS.host,
+        bot: isBot1Online ? 'online' : 'offline'
+      },
+      Empire_Bot: {
+        host: BOT_2_OPTIONS.host,
+        bot: isBot2Online ? 'online' : 'offline'
+      }
+    }
   });
 });
 
-// --- UPDATED /PLAYERS ENDPOINT VOOR ALLE BOTS ---
 app.get('/players', (req, res) => {
-  const responseData = {};
-
-  BOTS_CONFIG.forEach(config => {
-    const botName = config.name;
-    const data = botsData[botName];
-    const bot = data.botInstance;
-
-    // 1. Haal LIVE spelers op uit de bot
-    let livePlayers = [];
-    if (bot && data.isOnline && bot.players) {
-      livePlayers = Object.keys(bot.players).filter(name => name !== bot.username);
+  // --- Bot 1 Data ---
+  let livePlayers1 = [];
+  if (bot1 && isBot1Online && bot1.players) {
+    livePlayers1 = Object.keys(bot1.players).filter(name => name !== bot1.username);
+  }
+  const weeklyData1 = calculateStats(bot1PlayerData.history, 7);
+  const monthlyData1 = calculateStats(bot1PlayerData.history, 30);
+  const allTimeStats1 = {};
+  bot1PlayerData.history.forEach(record => {
+    if (!allTimeStats1[record.player]) {
+      allTimeStats1[record.player] = { totalJoins: 0, totalLeaves: 0, lastSeen: record.time };
     }
+    if (record.action === 'joined') allTimeStats1[record.player].totalJoins++;
+    if (record.action === 'left') allTimeStats1[record.player].totalLeaves++;
+    if (new Date(record.time) > new Date(allTimeStats1[record.player].lastSeen)) {
+      allTimeStats1[record.player].lastSeen = record.time;
+    }
+  });
 
-    // 2. Bereken statistieken
-    const weeklyData = calculateStats(botName, 7);
-    const monthlyData = calculateStats(botName, 30);
-    
-    const allTimeStats = {};
-    data.playerData.history.forEach(record => {
-      if (!allTimeStats[record.player]) {
-        allTimeStats[record.player] = { totalJoins: 0, totalLeaves: 0, lastSeen: record.time };
-      }
-      if (record.action === 'joined') allTimeStats[record.player].totalJoins++;
-      if (record.action === 'left') allTimeStats[record.player].totalLeaves++;
-      
-      if (new Date(record.time) > new Date(allTimeStats[record.player].lastSeen)) {
-        allTimeStats[record.player].lastSeen = record.time;
-      }
-    });
-
-    responseData[botName] = {
-      server: config.options.host,
-      liveData: {
-        onlineCount: livePlayers.length,
-        onlinePlayers: livePlayers
-      },
-      history: {
-        weekly: {
-          stats: weeklyData.stats,
-          rawEvents: weeklyData.filteredHistory
-        },
-        monthly: {
-          stats: monthlyData.stats,
-          rawEvents: monthlyData.filteredHistory
-        },
-        allTime: {
-          stats: allTimeStats,
-          rawEvents: data.playerData.history
-        }
-      }
-    };
+  // --- Bot 2 Data ---
+  let livePlayers2 = [];
+  if (bot2 && isBot2Online && bot2.players) {
+    livePlayers2 = Object.keys(bot2.players).filter(name => name !== bot2.username);
+  }
+  const weeklyData2 = calculateStats(bot2PlayerData.history, 7);
+  const monthlyData2 = calculateStats(bot2PlayerData.history, 30);
+  const allTimeStats2 = {};
+  bot2PlayerData.history.forEach(record => {
+    if (!allTimeStats2[record.player]) {
+      allTimeStats2[record.player] = { totalJoins: 0, totalLeaves: 0, lastSeen: record.time };
+    }
+    if (record.action === 'joined') allTimeStats2[record.player].totalJoins++;
+    if (record.action === 'left') allTimeStats2[record.player].totalLeaves++;
+    if (new Date(record.time) > new Date(allTimeStats2[record.player].lastSeen)) {
+      allTimeStats2[record.player].lastSeen = record.time;
+    }
   });
 
   res.status(200).json({
     success: true,
-    bots: responseData
+    bots: {
+      Solar_Bot: {
+        server: BOT_1_OPTIONS.host,
+        liveData: {
+          onlineCount: livePlayers1.length,
+          onlinePlayers: livePlayers1
+        },
+        history: {
+          weekly: { stats: weeklyData1.stats, rawEvents: weeklyData1.filteredHistory },
+          monthly: { stats: monthlyData1.stats, rawEvents: monthlyData1.filteredHistory },
+          allTime: { stats: allTimeStats1, rawEvents: bot1PlayerData.history }
+        }
+      },
+      Empire_Bot: {
+        server: BOT_2_OPTIONS.host,
+        liveData: {
+          onlineCount: livePlayers2.length,
+          onlinePlayers: livePlayers2
+        },
+        history: {
+          weekly: { stats: weeklyData2.stats, rawEvents: weeklyData2.filteredHistory },
+          monthly: { stats: monthlyData2.stats, rawEvents: monthlyData2.filteredHistory },
+          allTime: { stats: allTimeStats2, rawEvents: bot2PlayerData.history }
+        }
+      }
+    }
   });
 });
 
@@ -237,8 +305,7 @@ app.listen(PORT, () => {
 });
 
 // ============================================
-// 4. START ALLE BOTS
+// 6. START BEIDE BOTS APART
 // ============================================
-BOTS_CONFIG.forEach(config => {
-  startBot(config);
-});
+startBot1();
+startBot2();
