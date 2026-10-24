@@ -3,7 +3,7 @@ const express = require('express');
 const cors = require('cors');
 
 // ============================================
-// 1. CONFIGURATIE BOT 1 (Solar_Bot)
+// 1. CONFIGURATIE BOT 1 (Solar_Bot) - Geen tracking
 // ============================================
 const BOT_1_OPTIONS = {
   host: 'solar-smp.play.hosting',
@@ -16,11 +16,6 @@ const BOT_1_PASSWORD = '<passKeepAliveBot>';
 let bot1 = null;
 let isBot1Online = false;
 let reconnectDelay1 = 5000;
-
-const bot1PlayerData = {
-  currentlyOnline: new Set(),
-  history: [],
-};
 
 // ============================================
 // 2. CONFIGURATIE BOT 2 (Empire_Bot)
@@ -37,13 +32,8 @@ let bot2 = null;
 let isBot2Online = false;
 let reconnectDelay2 = 5000;
 
-const bot2PlayerData = {
-  currentlyOnline: new Set(),
-  history: [],
-};
-
 // ============================================
-// 3. LOGICA VOOR BOT 1
+// 3. LOGICA VOOR BOT 1 (Alleen online blijven)
 // ============================================
 function startBot1() {
   console.log(`[Solar_Bot] Verbinden met ${BOT_1_OPTIONS.host}...`);
@@ -66,20 +56,6 @@ function startBot1() {
     }
   });
 
-  bot1.on('playerJoined', (player) => {
-    if (player.username !== bot1.username) {
-      bot1PlayerData.currentlyOnline.add(player.username);
-      logPlayerAction1(player.username, 'joined');
-    }
-  });
-
-  bot1.on('playerLeft', (player) => {
-    if (player.username !== bot1.username) {
-      bot1PlayerData.currentlyOnline.delete(player.username);
-      logPlayerAction1(player.username, 'left');
-    }
-  });
-
   bot1.on('kicked', (reason) => {
     console.log('[Solar_Bot] ❌ Gekickt:', reason);
     isBot1Online = false;
@@ -93,20 +69,9 @@ function startBot1() {
   bot1.on('end', (reason) => {
     console.log(`[Solar_Bot] Disconnect (${reason}), reconnect in ${reconnectDelay1 / 1000}s`);
     isBot1Online = false;
-    bot1PlayerData.currentlyOnline.clear(); 
     setTimeout(startBot1, reconnectDelay1);
     reconnectDelay1 = Math.min(reconnectDelay1 * 2, 60000);
   });
-}
-
-function logPlayerAction1(username, action) {
-  const record = {
-    player: username,
-    action: action,
-    time: new Date().toISOString()
-  };
-  bot1PlayerData.history.push(record);
-  console.log(`[Tracking][Solar_Bot] ${username} ${action} de server.`);
 }
 
 // ============================================
@@ -133,20 +98,6 @@ function startBot2() {
     }
   });
 
-  bot2.on('playerJoined', (player) => {
-    if (player.username !== bot2.username) {
-      bot2PlayerData.currentlyOnline.add(player.username);
-      logPlayerAction2(player.username, 'joined');
-    }
-  });
-
-  bot2.on('playerLeft', (player) => {
-    if (player.username !== bot2.username) {
-      bot2PlayerData.currentlyOnline.delete(player.username);
-      logPlayerAction2(player.username, 'left');
-    }
-  });
-
   bot2.on('kicked', (reason) => {
     console.log('[Empire_Bot] ❌ Gekickt:', reason);
     isBot2Online = false;
@@ -160,43 +111,9 @@ function startBot2() {
   bot2.on('end', (reason) => {
     console.log(`[Empire_Bot] Disconnect (${reason}), reconnect in ${reconnectDelay2 / 1000}s`);
     isBot2Online = false;
-    bot2PlayerData.currentlyOnline.clear(); 
     setTimeout(startBot2, reconnectDelay2);
     reconnectDelay2 = Math.min(reconnectDelay2 * 2, 60000);
   });
-}
-
-function logPlayerAction2(username, action) {
-  const record = {
-    player: username,
-    action: action,
-    time: new Date().toISOString()
-  };
-  bot2PlayerData.history.push(record);
-  console.log(`[Tracking][Empire_Bot] ${username} ${action} de server.`);
-}
-
-// Algemene hulpfunctie voor statistieken
-function calculateStats(historyArray, daysBack) {
-  const cutoffDate = new Date();
-  cutoffDate.setDate(cutoffDate.getDate() - daysBack);
-  
-  const stats = {};
-  const filteredHistory = historyArray.filter(r => new Date(r.time) > cutoffDate);
-  
-  filteredHistory.forEach(record => {
-    if (!stats[record.player]) {
-      stats[record.player] = { totalJoins: 0, totalLeaves: 0, lastSeen: record.time };
-    }
-    if (record.action === 'joined') stats[record.player].totalJoins++;
-    if (record.action === 'left') stats[record.player].totalLeaves++;
-    
-    if (new Date(record.time) > new Date(stats[record.player].lastSeen)) {
-      stats[record.player].lastSeen = record.time;
-    }
-  });
-  
-  return { filteredHistory, stats };
 }
 
 // ============================================
@@ -211,97 +128,21 @@ app.get('/ping', (req, res) => {
   res.status(200).send('OK');
 });
 
+// Het root-endpoint (/) geeft nu live het aantal online spelers van Bot 2 terug als een text integer
 app.get('/', (req, res) => {
-  res.status(200).json({
-    status: 'ok',
-    timestamp: new Date().toISOString(),
-    uptime: process.uptime(),
-    bots: {
-      Solar_Bot: {
-        host: BOT_1_OPTIONS.host,
-        bot: isBot1Online ? 'online' : 'offline'
-      },
-      Empire_Bot: {
-        host: BOT_2_OPTIONS.host,
-        bot: isBot2Online ? 'online' : 'offline'
-      }
-    }
-  });
-});
+  let liveCount = 0;
 
-app.get('/players', (req, res) => {
-  // --- Bot 1 Data ---
-  let livePlayers1 = [];
-  if (bot1 && isBot1Online && bot1.players) {
-    livePlayers1 = Object.keys(bot1.players).filter(name => name !== bot1.username);
-  }
-  const weeklyData1 = calculateStats(bot1PlayerData.history, 7);
-  const monthlyData1 = calculateStats(bot1PlayerData.history, 30);
-  const allTimeStats1 = {};
-  bot1PlayerData.history.forEach(record => {
-    if (!allTimeStats1[record.player]) {
-      allTimeStats1[record.player] = { totalJoins: 0, totalLeaves: 0, lastSeen: record.time };
-    }
-    if (record.action === 'joined') allTimeStats1[record.player].totalJoins++;
-    if (record.action === 'left') allTimeStats1[record.player].totalLeaves++;
-    if (new Date(record.time) > new Date(allTimeStats1[record.player].lastSeen)) {
-      allTimeStats1[record.player].lastSeen = record.time;
-    }
-  });
-
-  // --- Bot 2 Data ---
-  let livePlayers2 = [];
   if (bot2 && isBot2Online && bot2.players) {
-    livePlayers2 = Object.keys(bot2.players).filter(name => name !== bot2.username);
+    const livePlayers2 = Object.keys(bot2.players).filter(name => name !== bot2.username);
+    liveCount = livePlayers2.length;
   }
-  const weeklyData2 = calculateStats(bot2PlayerData.history, 7);
-  const monthlyData2 = calculateStats(bot2PlayerData.history, 30);
-  const allTimeStats2 = {};
-  bot2PlayerData.history.forEach(record => {
-    if (!allTimeStats2[record.player]) {
-      allTimeStats2[record.player] = { totalJoins: 0, totalLeaves: 0, lastSeen: record.time };
-    }
-    if (record.action === 'joined') allTimeStats2[record.player].totalJoins++;
-    if (record.action === 'left') allTimeStats2[record.player].totalLeaves++;
-    if (new Date(record.time) > new Date(allTimeStats2[record.player].lastSeen)) {
-      allTimeStats2[record.player].lastSeen = record.time;
-    }
-  });
 
-  res.status(200).json({
-    success: true,
-    bots: {
-      Solar_Bot: {
-        server: BOT_1_OPTIONS.host,
-        liveData: {
-          onlineCount: livePlayers1.length,
-          onlinePlayers: livePlayers1
-        },
-        history: {
-          weekly: { stats: weeklyData1.stats, rawEvents: weeklyData1.filteredHistory },
-          monthly: { stats: monthlyData1.stats, rawEvents: monthlyData1.filteredHistory },
-          allTime: { stats: allTimeStats1, rawEvents: bot1PlayerData.history }
-        }
-      },
-      Empire_Bot: {
-        server: BOT_2_OPTIONS.host,
-        liveData: {
-          onlineCount: livePlayers2.length,
-          onlinePlayers: livePlayers2
-        },
-        history: {
-          weekly: { stats: weeklyData2.stats, rawEvents: weeklyData2.filteredHistory },
-          monthly: { stats: monthlyData2.stats, rawEvents: monthlyData2.filteredHistory },
-          allTime: { stats: allTimeStats2, rawEvents: bot2PlayerData.history }
-        }
-      }
-    }
-  });
+  res.status(200).send(liveCount.toString());
 });
 
 app.listen(PORT, () => {
   console.log(`[HTTP] Server draait op poort ${PORT}`);
-  console.log(`[HTTP] Alle bots data beschikbaar op: http://localhost:${PORT}/players`);
+  console.log(`[HTTP] Live speler count endpoint beschikbaar op: http://localhost:${PORT}/`);
 });
 
 // ============================================
