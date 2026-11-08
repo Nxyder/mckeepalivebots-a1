@@ -6,9 +6,9 @@ const cors = require('cors');
 // 1. CONFIGURATIE BOT 1 (Solar_Bot) - Geen tracking
 // ============================================
 const BOT_1_OPTIONS = {
-  host: 'solar-smp.play.hosting',
+  host: 'aero-pvp.play.hosting',
   port: 25565,
-  username: 'Solar_Bot',
+  username: 'KeepAliveBot',
   version: '1.21.1',
 };
 const BOT_1_PASSWORD = '<passKeepAliveBot>';
