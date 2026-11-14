@@ -3,7 +3,7 @@ const express = require('express');
 const cors = require('cors');
 
 // ============================================
-// 1. CONFIGURATIE BOT 1 (Solar_Bot) - Geen tracking
+// 1. CONFIGURATIE BOT 1 (Solar_Bot) - Blijft continu online
 // ============================================
 const BOT_1_OPTIONS = {
   host: 'aero-pvp.play.hosting',
@@ -18,7 +18,7 @@ let isBot1Online = false;
 let reconnectDelay1 = 5000;
 
 // ============================================
-// 2. CONFIGURATIE BOT 2 (Empire_Bot)
+// 2. CONFIGURATIE BOT 2 (Empire_Bot) - Periodiek joinen & leaven
 // ============================================
 const BOT_2_OPTIONS = {
   host: 'theempiresmp.play.hosting',
@@ -30,10 +30,10 @@ const BOT_2_PASSWORD = '<passKeepAliveBot>';
 
 let bot2 = null;
 let isBot2Online = false;
-let reconnectDelay2 = 5000;
+let latestEmpirePlayers = []; // Slaat de meest recente spelerslijst tijdelijk op
 
 // ============================================
-// 3. LOGICA VOOR BOT 1 (Alleen online blijven)
+// 3. LOGICA VOOR BOT 1 (Continu online)
 // ============================================
 function startBot1() {
   console.log(`[Solar_Bot] Verbinden met ${BOT_1_OPTIONS.host}...`);
@@ -75,46 +75,64 @@ function startBot1() {
 }
 
 // ============================================
-// 4. LOGICA VOOR BOT 2
+// 4. LOGICA VOOR BOT 2 (Elke 2 minuten joinen, data ophalen, wegwezen)
 // ============================================
-function startBot2() {
-  console.log(`[Empire_Bot] Verbinden met ${BOT_2_OPTIONS.host}...`);
+function runEmpireBotCheck() {
+  console.log(`[Empire_Bot] 🔄 Start periodieke check voor ${BOT_2_OPTIONS.host}...`);
 
   bot2 = mineflayer.createBot(BOT_2_OPTIONS);
+
+  // Zorg dat als het verbinden mislukt, de app niet crasht
+  bot2.on('error', (err) => {
+    console.log('[Empire_Bot] ⚠️ Error:', err.message);
+  });
+
+  bot2.on('kicked', (reason) => {
+    console.log('[Empire_Bot] ❌ Gekickt:', reason);
+  });
 
   bot2.once('spawn', () => {
     console.log('[Empire_Bot] ✅ Ingelogd en gespawned');
     isBot2Online = true;
-    reconnectDelay2 = 5000;
 
+    // Login commando's versturen indien nodig
     if (BOT_2_PASSWORD) {
       setTimeout(() => {
-        console.log('[Empire_Bot] Auth commando sturen...');
         bot2.chat(`/register ${BOT_2_PASSWORD} ${BOT_2_PASSWORD}`);
         setTimeout(() => {
           bot2.chat(`/login ${BOT_2_PASSWORD}`);
         }, 1000);
       }, 1000);
     }
-  });
 
-  bot2.on('kicked', (reason) => {
-    console.log('[Empire_Bot] ❌ Gekickt:', reason);
-    isBot2Online = false;
-  });
+    // Geef de server even de tijd om de spelerslijst door te sturen naar de bot (na 3 seconden)
+    setTimeout(() => {
+      if (bot2 && bot2.players) {
+        const livePlayers2 = Object.keys(bot2.players).filter(name => name !== bot2.username);
+        latestEmpirePlayers = livePlayers2;
+        console.log(`[Empire_Bot] 📊 Spelerdata opgehaald: ${livePlayers2.length} spelers gevonden.`);
+      }
 
-  bot2.on('error', (err) => {
-    console.log('[Empire_Bot] ⚠️ Error:', err.message);
-    isBot2Online = false;
+      // Sluit de verbinding direct weer af nadat de data binnen is
+      console.log('[Empire_Bot] 👋 Klaar, bot verlaat de server weer...');
+      isBot2Online = false;
+      try {
+        bot2.quit();
+      } catch (e) {
+        // Negeer eventuele fouten bij het afsluiten
+      }
+    }, 4000); // 4 seconden na spawn data pakken en wegwezen
   });
 
   bot2.on('end', (reason) => {
-    console.log(`[Empire_Bot] Disconnect (${reason}), reconnect in ${reconnectDelay2 / 1000}s`);
     isBot2Online = false;
-    setTimeout(startBot2, reconnectDelay2);
-    reconnectDelay2 = Math.min(reconnectDelay2 * 2, 60000);
+    console.log(`[Empire_Bot] Verbinding verbroken (${reason}).`);
   });
 }
+
+// Start direct de eerste check voor Empire Bot, en herhaal dit daarna elke 2 minuten (120.000 ms)
+runEmpireBotCheck();
+setInterval(runEmpireBotCheck, 120 * 1000);
 
 // ============================================
 // 5. HTTP SERVER
@@ -128,13 +146,16 @@ app.get('/ping', (req, res) => {
   res.status(200).send('OK');
 });
 
-// Het root-endpoint (/) geeft nu live het aantal online spelers van Bot 2 terug als een text integer
+// Het root-endpoint (/) geeft de speler count terug
 app.get('/', (req, res) => {
   let liveCount = 0;
 
-  if (bot2 && isBot2Online && bot2.players) {
-    const livePlayers2 = Object.keys(bot2.players).filter(name => name !== bot2.username);
-    liveCount = livePlayers2.length;
+  // Als Empire Bot net actief is geweest, pak die data. Anders fallback naar Bot 1 of 0.
+  if (latestEmpirePlayers.length > 0) {
+    liveCount = latestEmpirePlayers.length;
+  } else if (bot1 && isBot1Online && bot1.players) {
+    const livePlayers1 = Object.keys(bot1.players).filter(name => name !== bot1.username);
+    liveCount = livePlayers1.length;
   }
 
   res.status(200).send(liveCount.toString());
@@ -146,7 +167,6 @@ app.listen(PORT, () => {
 });
 
 // ============================================
-// 6. START BEIDE BOTS APART
+// 6. START BOT 1
 // ============================================
 startBot1();
-startBot2();
