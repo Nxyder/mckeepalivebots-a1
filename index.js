@@ -10,7 +10,7 @@ const BOT_1_OPTIONS = {
   port: 25565,
   username: 'KeepAliveBot',
   version: '1.21.1',
-  hideInventory: true, // Lost de protodef PartialReadError op voor 1.21.1 items
+  hideInventory: true,
 };
 const BOT_1_PASSWORD = '<passKeepAliveBot>';
 
@@ -57,49 +57,62 @@ function startBot1() {
   bot1.once('spawn', async () => {
     console.log('[KeepAliveBot] ✅ Ingelogd en gespawned op Aero PVP.');
 
-    await sleep(1500);
+    // Wacht tot de server klaar is met de login-procedure
+    await sleep(2000);
     bot1.chat(`/register ${BOT_1_PASSWORD} ${BOT_1_PASSWORD}`);
 
-    await sleep(1500);
+    await sleep(2000);
     bot1.chat(`/login ${BOT_1_PASSWORD}`);
 
-    await sleep(2000);
+    // Extra wachttijd zodat de server de login kan verwerken
+    await sleep(3000);
 
-    // Loop continu door de kits om de data up-to-date te houden
+    // Oneindige loop: haal alle kits op, wacht 5 minuten, herhaal
     while (true) {
+      console.log('[KeepAliveBot] 🔄 Leaderboards verversen...');
+
+      // Belangrijk: leeg de leaderboards zodat we geen oude data behouden
+      for (const kit of KITS) {
+        allLeaderboards[kit] = [];
+      }
+
       for (const kit of KITS) {
         currentKit = kit;
         bot1.chat(`/duel top ${kit}`);
-        await sleep(2500); // Wacht tot de chat binnenkomt
+        // Iets langere wachttijd zodat alle chatregels kunnen binnenkomen
+        await sleep(3000);
       }
       currentKit = null;
-      
-      console.log('[KeepAliveBot] ⏳ Alle kits opgehaald. Wacht 5 minuten voor de volgende update...');
+
+      console.log('[KeepAliveBot] ✅ Alle kits opgehaald. Wacht 5 minuten voor de volgende update...');
       await sleep(5 * 60 * 1000);
     }
   });
 
   bot1.on('messagestr', (message) => {
-    if (currentKit) {
-      const regex = /^#(\d+)\s*•\s*([^\s-]+)\s*-\s*(\d+)\s*rating/i;
-      const match = message.trim().match(regex);
+    if (!currentKit) return;
 
-      if (match) {
-        const playerName = match[2];
-        const playerRating = parseInt(match[3], 10);
+    // Regex voor het formaat: #1 • Speler - 1234 rating
+    const regex = /^#(\d+)\s*•\s*([^\s-]+)\s*-\s*(\d+)\s*rating/i;
+    const match = message.trim().match(regex);
 
-        const existingIndex = allLeaderboards[currentKit].findIndex(p => p.player === playerName);
-        
-        const playerObj = {
-          player: playerName,
-          rating: playerRating
-        };
+    if (match) {
+      const playerName = match[2];
+      const playerRating = parseInt(match[3], 10);
 
-        if (existingIndex !== -1) {
-          allLeaderboards[currentKit][existingIndex] = playerObj;
-        } else {
-          allLeaderboards[currentKit].push(playerObj);
-        }
+      const existingIndex = allLeaderboards[currentKit].findIndex(
+        (p) => p.player === playerName
+      );
+
+      const playerObj = {
+        player: playerName,
+        rating: playerRating
+      };
+
+      if (existingIndex !== -1) {
+        allLeaderboards[currentKit][existingIndex] = playerObj;
+      } else {
+        allLeaderboards[currentKit].push(playerObj);
       }
     }
   });
@@ -178,7 +191,9 @@ app.get('/', (req, res) => {
   let liveCount = 0;
 
   if (bot2 && isBot2Online && bot2.players) {
-    const livePlayers2 = Object.keys(bot2.players).filter(name => name !== bot2.username);
+    const livePlayers2 = Object.keys(bot2.players).filter(
+      (name) => name !== bot2.username
+    );
     liveCount = livePlayers2.length;
   }
 
