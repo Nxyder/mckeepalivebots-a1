@@ -3,12 +3,24 @@ const express = require('express');
 const cors = require('cors');
 
 // ============================================
-// 0. HELPERS
+// 0. GLOBALE CRASH-BEVEILIGING
+// ============================================
+// Voorkomt dat de hele applicatie (en de webserver) crasht bij onverwachte netwerkfouten
+process.on('uncaughtException', (err) => {
+  console.error('[CRITICAL] Onverwachte fout (uncaughtException):', err.message);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('[CRITICAL] Onopgevangen belofte-afwijzing (unhandledRejection):', reason);
+});
+
+// ============================================
+// 1. HELPERS
 // ============================================
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // ============================================
-// 1. CONFIG BOT 1 (KeepAliveBot - Aero PVP)
+// 2. CONFIG BOT 1 (KeepAliveBot - Aero PVP)
 // ============================================
 const BOT_1_OPTIONS = {
   host: 'aero-pvp.play.hosting',
@@ -31,7 +43,7 @@ let allLeaderboards = {
 };
 
 // ============================================
-// 2. CONFIG BOT 2 (TheKiddoBot - Empire SMP)
+// 3. CONFIG BOT 2 (TheKiddoBot - Empire SMP)
 // ============================================
 const BOT_2_OPTIONS = {
   host: 'theempiresmp.play.hosting',
@@ -42,11 +54,8 @@ const BOT_2_OPTIONS = {
 const BOT_2_PASSWORD = '<passKeepAliveBot>';
 
 // ============================================
-// 3. STATE MACHINE PER BOT
+// 4. STATE MACHINE PER BOT
 // ============================================
-// Elke bot heeft exact één state-object. Alle events lezen/schrijven hierin.
-// States: 'idle' | 'connecting' | 'online' | 'reconnecting' | 'stopped'
-
 function createBotState(name) {
   return {
     name,
@@ -63,7 +72,7 @@ const state1 = createBotState('KeepAliveBot');
 const state2 = createBotState('TheKiddoBot');
 
 // ============================================
-// 4. GENERIEKE RECONNECT + CLEANUP
+// 5. GENERIEKE RECONNECT + CLEANUP
 // ============================================
 function cleanupBot(state) {
   if (state.bot) {
@@ -100,7 +109,7 @@ function resetReconnectDelay(state) {
 }
 
 // ============================================
-// 5. BOT 1 (Aero PVP & Leaderboards)
+// 6. BOT 1 (Aero PVP & Leaderboards)
 // ============================================
 function startBot1() {
   if (state1.status === 'connecting' || state1.status === 'online') {
@@ -115,11 +124,19 @@ function startBot1() {
   state1.status = 'connecting';
   console.log('[KeepAliveBot] Verbinden...');
 
-  const bot = mineflayer.createBot(BOT_1_OPTIONS);
+  let bot;
+  try {
+    bot = mineflayer.createBot(BOT_1_OPTIONS);
+  } catch (err) {
+    console.log('[KeepAliveBot] ❌ Fout bij aanmaken bot:', err.message);
+    handleDisconnect1('init-error');
+    return;
+  }
+  
   state1.bot = bot;
 
   bot.once('spawn', async () => {
-    if (state1.status !== 'connecting') return; // verlopen spawn
+    if (state1.status !== 'connecting') return; 
     state1.status = 'online';
     resetReconnectDelay(state1);
     console.log('[KeepAliveBot] ✅ Ingelogd en gespawned op Aero PVP.');
@@ -134,7 +151,6 @@ function startBot1() {
 
     await sleep(3000);
 
-    // Loop-guard: start de while-loop maar één keer per online-sessie
     if (state1.loopRunning) {
       console.log('[KeepAliveBot] ⚠️ Loop loopt al, skip.');
       return;
@@ -191,12 +207,12 @@ function startBot1() {
 
   bot.on('error', (err) => {
     console.log('[KeepAliveBot] ⚠️ Error:', err.message);
-    // 'end' volgt meestal; daar regelen we reconnect
+    handleDisconnect1('error: ' + err.message);
   });
 
   bot.on('end', (reason) => {
     console.log(`[KeepAliveBot] Verbinding verbroken (${reason})`);
-    handleDisconnect1('end');
+    handleDisconnect1('end: ' + reason);
   });
 }
 
@@ -209,7 +225,7 @@ function handleDisconnect1(reason) {
 }
 
 // ============================================
-// 6. BOT 2 (Empire SMP)
+// 7. BOT 2 (Empire SMP)
 // ============================================
 function startBot2() {
   if (state2.status === 'connecting' || state2.status === 'online') {
@@ -224,7 +240,15 @@ function startBot2() {
   state2.status = 'connecting';
   console.log(`[TheKiddoBot] Verbinden met ${BOT_2_OPTIONS.host}...`);
 
-  const bot = mineflayer.createBot(BOT_2_OPTIONS);
+  let bot;
+  try {
+    bot = mineflayer.createBot(BOT_2_OPTIONS);
+  } catch (err) {
+    console.log('[TheKiddoBot] ❌ Fout bij aanmaken bot:', err.message);
+    handleDisconnect2('init-error');
+    return;
+  }
+
   state2.bot = bot;
 
   bot.once('spawn', () => {
@@ -253,11 +277,12 @@ function startBot2() {
 
   bot.on('error', (err) => {
     console.log('[TheKiddoBot] ⚠️ Error:', err.message);
+    handleDisconnect2('error: ' + err.message);
   });
 
   bot.on('end', (reason) => {
     console.log(`[TheKiddoBot] Disconnect (${reason})`);
-    handleDisconnect2('end');
+    handleDisconnect2('end: ' + reason);
   });
 }
 
@@ -269,7 +294,7 @@ function handleDisconnect2(reason) {
 }
 
 // ============================================
-// 7. EXPRESS API
+// 8. EXPRESS API
 // ============================================
 const app = express();
 app.use(cors());
@@ -307,7 +332,7 @@ app.listen(PORT, () => {
 });
 
 // ============================================
-// 8. START
+// 9. START BOTS
 // ============================================
 startBot1();
 startBot2();
