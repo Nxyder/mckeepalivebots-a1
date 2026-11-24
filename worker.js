@@ -4,12 +4,30 @@ const mineflayer = require('mineflayer');
 const role = process.argv[2]; // 'keepalive' of 'kiddo'
 
 // ============================================
-// CRASH-ISOLATIE (binnen deze worker)
+// CRASH-ISOLATIE — negeer bekende parse-fouten
 // ============================================
+let parseErrorCount = 0;
+
 process.on('uncaughtException', (err) => {
-  console.error(`[${role}] uncaughtException:`, err.message);
-  // Meld crash aan supervisor, maar laat supervisor herstarten
-  process.send?.({ type: 'crash', message: err.message });
+  const msg = err.message || '';
+
+  // Negeer bekende parse-fouten — bot blijft draaien
+  if (
+    msg.includes('unknown chat format code') ||
+    msg.includes('PartialReadError') ||
+    msg.includes('Read error for undefined') ||
+    msg.includes('Invalid move player packet')
+  ) {
+    parseErrorCount++;
+    console.warn(
+      `[${role}] parse-fout genegeerd (${parseErrorCount}x): ${msg.slice(0, 80)}`
+    );
+    return; // NIET process.exit(1) — bot blijft draaien
+  }
+
+  // Onbekende fout: afsluiten zodat supervisor herstart
+  console.error(`[${role}] onverwachte crash:`, msg);
+  process.send?.({ type: 'crash', message: msg });
   process.exit(1);
 });
 
@@ -87,7 +105,7 @@ try {
 bot.once('spawn', async () => {
   console.log(`[${role}] ✅ Ingelogd en gespawned op ${cfg.host}`);
 
-  // FIX 1: physics volledig uit — voorkomt invalid_player_movement kick
+  // Physics volledig uit — voorkomt invalid_player_movement kick
   try {
     bot.physics.enabled = false;
   } catch (err) {
@@ -98,17 +116,14 @@ bot.once('spawn', async () => {
   await sleep(AUTH_DELAY_MS);
 
   if (role === 'keepalive') {
-    // Eerst /login, daarna /register (als dat nodig is)
     bot.chat(`/login ${cfg.password}`);
     await sleep(2000);
     bot.chat(`/register ${cfg.password} ${cfg.password}`);
   } else {
-    // Kiddo: eerst /login, alleen /register als het nodig is
     bot.chat(`/login ${cfg.password}`);
     await sleep(3000);
   }
 
-  // Start leaderboard-loop alleen voor keepalive
   if (role === 'keepalive') {
     startLeaderboardLoop();
   }
@@ -149,10 +164,10 @@ async function startLeaderboardLoop() {
 }
 
 // ============================================
-// FIX 2: CHAT VEILIG PARSEN
+// CHAT VEILIG PARSEN
 // ============================================
-// De crash "unknown chat format code" komt uit de interne parser.
-// We vangen de ruwe chat-packet af en parsen handmatig met try/catch.
+// Gebruik de ruwe client-packet en parse handmatig met try/catch.
+// Dit omzeilt de buggy interne parser volledig.
 bot._client.on('chat', (packet) => {
   if (role !== 'keepalive') return;
   if (!currentKit) return;
@@ -165,7 +180,6 @@ bot._client.on('chat', (packet) => {
     if (typeof jsonMsg === 'string') {
       text = jsonMsg;
     } else if (jsonMsg && typeof jsonMsg === 'object') {
-      // Doorzoek het component recursief naar tekst
       const extract = (node) => {
         if (!node) return '';
         if (typeof node === 'string') return node;
@@ -181,14 +195,12 @@ bot._client.on('chat', (packet) => {
 
     if (!text) return;
 
-    // Match leaderboard-regel: "#1 • Player - 1234 rating"
     const match = text.trim().match(/^#(\d+)\s*•\s*([^\s-]+)\s*-\s*(\d+)\s*rating/i);
     if (!match) return;
 
     const playerName = match[2];
     const playerRating = parseInt(match[3], 10);
 
-    // Stuur naar supervisor via IPC
     process.send?.({
       type: 'leaderboard',
       kit: currentKit,
@@ -196,7 +208,6 @@ bot._client.on('chat', (packet) => {
       rating: playerRating,
     });
   } catch (err) {
-    // Nooit crashen op een chat-packet
     console.warn(`[${role}] chat parse fout (genegeerd):`, err.message);
   }
 });
