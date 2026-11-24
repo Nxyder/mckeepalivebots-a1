@@ -8,10 +8,12 @@
   },
   "dependencies": {
     "cors": "^2.8.5",
-    "express": "^4.19.2",
-    "mineflayer": "^4.20.1"
+    "express": "^4.21.2",
+    "mineflayer": "^4.23.0",
+    "minecraft-protocol": "^1.47.0",
+    "protodef": "^1.17.0"
   },
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=20.0.0"
   }
 }
