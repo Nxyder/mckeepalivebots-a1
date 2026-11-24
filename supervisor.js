@@ -1,24 +1,62 @@
 // supervisor.js — herstart workers, houdt API draaiend
 const { fork } = require('child_process');
+const express = require('express');
+const cors = require('cors');
+const { KITS } = require('./config');
 
-const allLeaderboards = {
-  'Diamond Smp': [], 'Sword': [], 'Mace': [], 'Crystal PVP': [], 'Spear Mace': [],
-};
+// ============================================
+// GLOBALE CRASH-BEVEILIGING
+// ============================================
+process.on('uncaughtException', (err) => {
+  console.error('[CRITICAL] uncaughtException:', err.message);
+});
+
+process.on('unhandledRejection', (reason) => {
+  console.error('[CRITICAL] unhandledRejection:', reason);
+});
+
+// ============================================
+// LEADERBOARD STATE (gedeeld met workers via IPC)
+// ============================================
+const allLeaderboards = {};
+for (const kit of KITS) allLeaderboards[kit] = [];
+
+// ============================================
+// WORKER MANAGEMENT
+// ============================================
+const workers = {}; // role -> child
 
 function spawnWorker(role) {
-  const child = fork('./worker.js', [role]);
+  console.log(`[supervisor] ${role} starten...`);
+
+  const child = fork('./worker.js', [role], {
+    stdio: ['inherit', 'inherit', 'inherit', 'ipc'],
+  });
+
+  workers[role] = child;
 
   child.on('message', (msg) => {
+    if (!msg || !msg.type) return;
+
     if (msg.type === 'leaderboard') {
       const list = allLeaderboards[msg.kit];
+      if (!list) return;
+
       const idx = list.findIndex((p) => p.player === msg.player);
       const obj = { player: msg.player, rating: msg.rating };
-      if (idx !== -1) list[idx] = obj; else list.push(obj);
+
+      if (idx !== -1) list[idx] = obj;
+      else list.push(obj);
+    }
+
+    if (msg.type === 'crash') {
+      console.warn(`[supervisor] ${role} crash: ${msg.message}`);
     }
   });
 
-  child.on('exit', (code) => {
-    console.log(`[supervisor] ${role} gestopt (code ${code}), herstart in 5s`);
+  child.on('exit', (code, signal) => {
+    console.log(`[supervisor] ${role} gestopt (code ${code}, signal ${signal}), herstart in 5s`);
+    workers[role] = null;
     setTimeout(() => spawnWorker(role), 5000);
   });
 }
@@ -26,16 +64,32 @@ function spawnWorker(role) {
 spawnWorker('keepalive');
 spawnWorker('kiddo');
 
-// === API (blijft altijd draaien, ook als een bot crasht) ===
-const express = require('express');
-const cors = require('cors');
+// ============================================
+// EXPRESS API (blijft altijd draaien)
+// ============================================
 const app = express();
 app.use(cors());
 
 const PORT = process.env.PORT || 3000;
 
 app.get('/ping', (req, res) => res.status(200).send('OK'));
-app.get('/status', (req, res) => res.json({ leaderboards: allLeaderboards }));
+
+app.get('/', (req, res) => {
+  // Live spelerscount — alleen beschikbaar als kiddo-worker draait
+  // (voor nu: leeg, want worker-state zit in apart proces)
+  res.status(200).send('0');
+});
+
+app.get('/status', (req, res) => {
+  res.json({
+    workers: {
+      keepalive: workers.keepalive ? 'running' : 'restarting',
+      kiddo: workers.kiddo ? 'running' : 'restarting',
+    },
+    leaderboards: allLeaderboards,
+  });
+});
+
 app.get('/aero/stats/all', (req, res) => res.json(allLeaderboards));
 app.get('/aero/stats/diamond-smp', (req, res) => res.json(allLeaderboards['Diamond Smp']));
 app.get('/aero/stats/sword', (req, res) => res.json(allLeaderboards['Sword']));
