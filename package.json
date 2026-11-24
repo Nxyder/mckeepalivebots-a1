@@ -2,9 +2,9 @@
   "name": "minecraft-keepalive-bot",
   "version": "1.0.0",
   "description": "KeepAlive bot met Express API voor spelersdata",
-  "main": "index.js",
+  "main": "supervisor.js",
   "scripts": {
-    "start": "node index.js"
+    "start": "node supervisor.js"
   },
   "dependencies": {
     "cors": "^2.8.5",
