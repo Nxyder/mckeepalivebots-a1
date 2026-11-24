@@ -11,6 +11,7 @@
     "express": "^4.21.2",
     "mineflayer": "^4.23.0",
     "minecraft-protocol": "^1.47.0",
+    "prismarine-chat": "^1.11.0",
     "protodef": "^1.17.0"
   },
   "engines": {
