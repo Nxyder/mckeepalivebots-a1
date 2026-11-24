@@ -11,4 +11,4 @@ RUN npm install --omit=dev
 # Nu pas de rest van de code
 COPY . .
 
-CMD ["node", "index.js"]
+CMD ["node", "supervisor.js"]
