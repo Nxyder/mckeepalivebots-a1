@@ -2,10 +2,10 @@ FROM node:20-alpine
 
 WORKDIR /app
 
-# Eerst alleen package.json (lockfile bewust niet, zodat we vers schrijven)
+# Eerst alleen package.json
 COPY package.json ./
 
-# Installeer exact wat in package.json staat (geen @latest!)
+# Installeer exact wat in package.json staat
 RUN npm install --omit=dev
 
 # Nu pas de rest van de code
