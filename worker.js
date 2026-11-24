@@ -1,5 +1,14 @@
 // worker.js — draait één bot in een eigen proces
 const mineflayer = require('mineflayer');
+const {
+  KITS,
+  BOT_1,
+  BOT_2,
+  LEADERBOARD_REFRESH_MS,
+  KIT_QUERY_DELAY_MS,
+  AUTH_DELAY_MS,
+  KEEPALIVE_INTERVAL_MS,
+} = require('./config');
 
 const role = process.argv[2]; // 'keepalive' of 'kiddo'
 
@@ -9,18 +18,19 @@ const role = process.argv[2]; // 'keepalive' of 'kiddo'
 let parseErrorCount = 0;
 
 process.on('uncaughtException', (err) => {
-  const msg = err.message || '';
+  const msg = (err && err.message) || '';
 
   // Negeer bekende parse-fouten — bot blijft draaien
   if (
     msg.includes('unknown chat format code') ||
     msg.includes('PartialReadError') ||
     msg.includes('Read error for undefined') ||
-    msg.includes('Invalid move player packet')
+    msg.includes('Invalid move player packet') ||
+    msg.includes('timed out')
   ) {
     parseErrorCount++;
     console.warn(
-      `[${role}] parse-fout genegeerd (${parseErrorCount}x): ${msg.slice(0, 80)}`
+      `[${role}] fout genegeerd (${parseErrorCount}x): ${msg.slice(0, 100)}`
     );
     return; // NIET process.exit(1) — bot blijft draaien
   }
@@ -36,40 +46,14 @@ process.on('unhandledRejection', (reason) => {
 });
 
 // ============================================
-// CONFIG
+// CONFIG PER ROL
 // ============================================
-const KITS = ['Diamond Smp', 'Sword', 'Mace', 'Crystal PVP', 'Spear Mace'];
+const cfg = role === 'keepalive' ? BOT_1 : role === 'kiddo' ? BOT_2 : null;
 
-const CONFIG = {
-  keepalive: {
-    host: 'aero-pvp.play.hosting',
-    port: 25565,
-    username: 'KeepAliveBot',
-    version: '1.21.1',
-    hideInventory: true,
-    password: '<passKeepAliveBot>',
-  },
-  kiddo: {
-    host: 'theempiresmp.play.hosting',
-    port: 25565,
-    username: 'Thekiddo_Bot',
-    version: '1.21.1',
-    password: '<passKeepAliveBot>',
-  },
-};
-
-const cfg = CONFIG[role];
 if (!cfg) {
   console.error(`[worker] Onbekende rol: ${role}`);
   process.exit(1);
 }
-
-// ============================================
-// TIMINGS
-// ============================================
-const AUTH_DELAY_MS = 2000;
-const KIT_QUERY_DELAY_MS = 3000;
-const LEADERBOARD_REFRESH_MS = 5 * 60 * 1000;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -79,6 +63,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let currentKit = null;
 let loopRunning = false;
 let stopped = false;
+let keepaliveTimer = null;
 
 // ============================================
 // BOT AANMAKEN
@@ -93,10 +78,44 @@ try {
     username: cfg.username,
     version: cfg.version,
     hideInventory: cfg.hideInventory,
+    // BELANGRIJK: schakel Mineflayer's eigen keepalive-timeout uit.
+    // We regelen keepalive zelf via de client.
+    checkTimeoutInterval: 0,
   });
 } catch (err) {
   console.error(`[${role}] ❌ Fout bij aanmaken bot:`, err.message);
   process.exit(1);
+}
+
+// ============================================
+// EIGEN KEEPALIVE — voorkomt server-timeout
+// ============================================
+function startKeepalive() {
+  if (keepaliveTimer) return;
+
+  keepaliveTimer = setInterval(() => {
+    if (stopped || !bot || !bot._client) return;
+
+    try {
+      // Stuur een keepalive-packet naar de server.
+      // Dit houdt de verbinding actief, ook als de server zelf
+      // geen keepalive stuurt.
+      if (typeof bot._client.write === 'function') {
+        bot._client.write('keep_alive', {
+          keepAliveId: BigInt(Date.now()),
+        });
+      }
+    } catch (err) {
+      // Negeer fouten — de verbinding blijft gewoon bestaan
+    }
+  }, KEEPALIVE_INTERVAL_MS);
+}
+
+function stopKeepalive() {
+  if (keepaliveTimer) {
+    clearInterval(keepaliveTimer);
+    keepaliveTimer = null;
+  }
 }
 
 // ============================================
@@ -111,6 +130,9 @@ bot.once('spawn', async () => {
   } catch (err) {
     console.warn(`[${role}] physics uitzetten faalde:`, err.message);
   }
+
+  // Start eigen keepalive-loop
+  startKeepalive();
 
   // Wacht tot server de spawn-positie bevestigt
   await sleep(AUTH_DELAY_MS);
@@ -166,8 +188,6 @@ async function startLeaderboardLoop() {
 // ============================================
 // CHAT VEILIG PARSEN
 // ============================================
-// Gebruik de ruwe client-packet en parse handmatig met try/catch.
-// Dit omzeilt de buggy interne parser volledig.
 bot._client.on('chat', (packet) => {
   if (role !== 'keepalive') return;
   if (!currentKit) return;
@@ -176,7 +196,6 @@ bot._client.on('chat', (packet) => {
     const jsonMsg = packet.message;
     let text = '';
 
-    // Handmatige, veilige tekst-extractie
     if (typeof jsonMsg === 'string') {
       text = jsonMsg;
     } else if (jsonMsg && typeof jsonMsg === 'object') {
@@ -208,7 +227,7 @@ bot._client.on('chat', (packet) => {
       rating: playerRating,
     });
   } catch (err) {
-    console.warn(`[${role}] chat parse fout (genegeerd):`, err.message);
+    // Nooit crashen op een chat-packet
   }
 });
 
@@ -224,17 +243,31 @@ bot.on('kicked', (reason) => {
   }
   console.log(`[${role}] ❌ Gekickt:`, reasonText);
   stopped = true;
+  stopKeepalive();
   process.exit(1);
 });
 
 bot.on('error', (err) => {
-  console.log(`[${role}] ⚠️ Error:`, err.message);
+  const msg = (err && err.message) || '';
+
+  // Timeout = normale disconnect, geen crash
+  if (msg.includes('timed out')) {
+    console.log(`[${role}] ⏱️ Timeout — supervisor herstart...`);
+    stopped = true;
+    stopKeepalive();
+    process.exit(1);
+    return;
+  }
+
+  console.log(`[${role}] ⚠️ Error:`, msg);
   stopped = true;
+  stopKeepalive();
   process.exit(1);
 });
 
 bot.on('end', (reason) => {
   console.log(`[${role}] Verbinding verbroken (${reason})`);
   stopped = true;
+  stopKeepalive();
   process.exit(1);
 });
