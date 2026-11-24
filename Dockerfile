@@ -2,10 +2,13 @@ FROM node:20-alpine
 
 WORKDIR /app
 
-COPY package*.json ./
-RUN npm install
-RUN npm install mineflayer@latest node-minecraft-protocol@latest protodef@latest
+# Eerst alleen package.json (lockfile bewust niet, zodat we vers schrijven)
+COPY package.json ./
 
+# Installeer exact wat in package.json staat (geen @latest!)
+RUN npm install --omit=dev
+
+# Nu pas de rest van de code
 COPY . .
 
 CMD ["node", "index.js"]
