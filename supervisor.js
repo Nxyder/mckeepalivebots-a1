@@ -2,6 +2,7 @@
 const { fork } = require('child_process');
 const express = require('express');
 const cors = require('cors');
+const { KITS, RECONNECT } = require('./config');
 
 // ============================================
 // GLOBALE CRASH-BEVEILIGING (supervisor zelf)
@@ -17,8 +18,6 @@ process.on('unhandledRejection', (reason) => {
 // ============================================
 // LEADERBOARD STATE (gedeeld via IPC met workers)
 // ============================================
-const KITS = ['Diamond Smp', 'Sword', 'Mace', 'Crystal PVP', 'Spear Mace'];
-
 const allLeaderboards = {};
 for (const kit of KITS) allLeaderboards[kit] = [];
 
@@ -63,7 +62,10 @@ function spawnWorker(role) {
     workers[role] = null;
     restartCount[role] += 1;
 
-    const delay = Math.min(5000 * restartCount[role], 60000);
+    const delay = Math.min(
+      RECONNECT.initialDelay * restartCount[role],
+      RECONNECT.maxDelay
+    );
     console.log(
       `[supervisor] ${role} gestopt (code ${code}, signal ${signal}) — herstart in ${delay / 1000}s`
     );
