@@ -1,16 +1,16 @@
 // worker.js — draait één bot in een eigen proces
 const mineflayer = require('mineflayer');
-const { KITS, BOT_1, BOT_2, LEADERBOARD_REFRESH_MS, KIT_QUERY_DELAY_MS, AUTH_DELAY_MS } = require('./config');
 
 const role = process.argv[2]; // 'keepalive' of 'kiddo'
 
 // ============================================
-// CRASH-ISOLATIE
+// CRASH-ISOLATIE (binnen deze worker)
 // ============================================
 process.on('uncaughtException', (err) => {
   console.error(`[${role}] uncaughtException:`, err.message);
+  // Meld crash aan supervisor, maar laat supervisor herstarten
   process.send?.({ type: 'crash', message: err.message });
-  process.exit(1); // supervisor herstart deze worker
+  process.exit(1);
 });
 
 process.on('unhandledRejection', (reason) => {
@@ -18,17 +18,46 @@ process.on('unhandledRejection', (reason) => {
 });
 
 // ============================================
-// CONFIG PER ROL
+// CONFIG
 // ============================================
-const cfg = role === 'keepalive' ? BOT_1 : role === 'kiddo' ? BOT_2 : null;
+const KITS = ['Diamond Smp', 'Sword', 'Mace', 'Crystal PVP', 'Spear Mace'];
 
+const CONFIG = {
+  keepalive: {
+    host: 'aero-pvp.play.hosting',
+    port: 25565,
+    username: 'KeepAliveBot',
+    version: '1.21.1',
+    hideInventory: true,
+    password: '<passKeepAliveBot>',
+  },
+  kiddo: {
+    host: 'theempiresmp.play.hosting',
+    port: 25565,
+    username: 'Thekiddo_Bot',
+    version: '1.21.1',
+    password: '<passKeepAliveBot>',
+  },
+};
+
+const cfg = CONFIG[role];
 if (!cfg) {
   console.error(`[worker] Onbekende rol: ${role}`);
   process.exit(1);
 }
 
+// ============================================
+// TIMINGS
+// ============================================
+const AUTH_DELAY_MS = 2000;
+const KIT_QUERY_DELAY_MS = 3000;
+const LEADERBOARD_REFRESH_MS = 5 * 60 * 1000;
+
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// ============================================
+// STATE
+// ============================================
 let currentKit = null;
 let loopRunning = false;
 let stopped = false;
@@ -53,30 +82,33 @@ try {
 }
 
 // ============================================
-// SPAWN + AUTH
+// SPAWN + AUTH + PHYSICS UIT
 // ============================================
 bot.once('spawn', async () => {
   console.log(`[${role}] ✅ Ingelogd en gespawned op ${cfg.host}`);
 
-  // Physics uit: voorkomt invalid_player_movement kick
-  bot.physics.enabled = false;
+  // FIX 1: physics volledig uit — voorkomt invalid_player_movement kick
+  try {
+    bot.physics.enabled = false;
+  } catch (err) {
+    console.warn(`[${role}] physics uitzetten faalde:`, err.message);
+  }
 
-  // Wacht tot server positie bevestigd heeft
+  // Wacht tot server de spawn-positie bevestigt
   await sleep(AUTH_DELAY_MS);
 
   if (role === 'keepalive') {
+    // Eerst /login, daarna /register (als dat nodig is)
     bot.chat(`/login ${cfg.password}`);
     await sleep(2000);
     bot.chat(`/register ${cfg.password} ${cfg.password}`);
   } else {
-    // Kiddo: eerst /login proberen, bij "not registered" pas /register
+    // Kiddo: eerst /login, alleen /register als het nodig is
     bot.chat(`/login ${cfg.password}`);
     await sleep(3000);
-    if (!bot.authenticated) {
-      bot.chat(`/register ${cfg.password} ${cfg.password}`);
-    }
   }
 
+  // Start leaderboard-loop alleen voor keepalive
   if (role === 'keepalive') {
     startLeaderboardLoop();
   }
@@ -103,7 +135,10 @@ async function startLeaderboardLoop() {
       currentKit = null;
 
       if (stopped || !bot || !bot.entity) break;
-      console.log(`[${role}] ✅ Alle kits opgehaald. Wacht ${LEADERBOARD_REFRESH_MS / 60000} minuten...`);
+
+      console.log(
+        `[${role}] ✅ Alle kits opgehaald. Wacht ${LEADERBOARD_REFRESH_MS / 60000} minuten...`
+      );
       await sleep(LEADERBOARD_REFRESH_MS);
     }
   } finally {
@@ -114,40 +149,69 @@ async function startLeaderboardLoop() {
 }
 
 // ============================================
-// CHAT VEILIG PARSEN (met try/catch)
+// FIX 2: CHAT VEILIG PARSEN
 // ============================================
-bot.on('message', (jsonMsg) => {
+// De crash "unknown chat format code" komt uit de interne parser.
+// We vangen de ruwe chat-packet af en parsen handmatig met try/catch.
+bot._client.on('chat', (packet) => {
+  if (role !== 'keepalive') return;
   if (!currentKit) return;
-  if (!bot || !bot.entity) return;
 
-  let text;
   try {
-    text = jsonMsg.toString();
+    const jsonMsg = packet.message;
+    let text = '';
+
+    // Handmatige, veilige tekst-extractie
+    if (typeof jsonMsg === 'string') {
+      text = jsonMsg;
+    } else if (jsonMsg && typeof jsonMsg === 'object') {
+      // Doorzoek het component recursief naar tekst
+      const extract = (node) => {
+        if (!node) return '';
+        if (typeof node === 'string') return node;
+        if (Array.isArray(node)) return node.map(extract).join('');
+        let out = '';
+        if (node.text) out += node.text;
+        if (node.extra) out += extract(node.extra);
+        if (node.with) out += extract(node.with);
+        return out;
+      };
+      text = extract(jsonMsg);
+    }
+
+    if (!text) return;
+
+    // Match leaderboard-regel: "#1 • Player - 1234 rating"
+    const match = text.trim().match(/^#(\d+)\s*•\s*([^\s-]+)\s*-\s*(\d+)\s*rating/i);
+    if (!match) return;
+
+    const playerName = match[2];
+    const playerRating = parseInt(match[3], 10);
+
+    // Stuur naar supervisor via IPC
+    process.send?.({
+      type: 'leaderboard',
+      kit: currentKit,
+      player: playerName,
+      rating: playerRating,
+    });
   } catch (err) {
+    // Nooit crashen op een chat-packet
     console.warn(`[${role}] chat parse fout (genegeerd):`, err.message);
-    return;
   }
-
-  const match = text.trim().match(/^#(\d+)\s*•\s*([^\s-]+)\s*-\s*(\d+)\s*rating/i);
-  if (!match) return;
-
-  const playerName = match[2];
-  const playerRating = parseInt(match[3], 10);
-
-  // Stuur resultaat naar supervisor via IPC
-  process.send?.({
-    type: 'leaderboard',
-    kit: currentKit,
-    player: playerName,
-    rating: playerRating,
-  });
 });
 
 // ============================================
 // VERBINDINGS-EVENTS
 // ============================================
 bot.on('kicked', (reason) => {
-  console.log(`[${role}] ❌ Gekickt:`, JSON.stringify(reason).slice(0, 300));
+  let reasonText;
+  try {
+    reasonText = JSON.stringify(reason).slice(0, 300);
+  } catch {
+    reasonText = String(reason).slice(0, 300);
+  }
+  console.log(`[${role}] ❌ Gekickt:`, reasonText);
   stopped = true;
   process.exit(1);
 });
