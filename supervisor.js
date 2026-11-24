@@ -2,22 +2,23 @@
 const { fork } = require('child_process');
 const express = require('express');
 const cors = require('cors');
-const { KITS } = require('./config');
 
 // ============================================
-// GLOBALE CRASH-BEVEILIGING
+// GLOBALE CRASH-BEVEILIGING (supervisor zelf)
 // ============================================
 process.on('uncaughtException', (err) => {
-  console.error('[CRITICAL] uncaughtException:', err.message);
+  console.error('[CRITICAL] supervisor uncaughtException:', err.message);
 });
 
 process.on('unhandledRejection', (reason) => {
-  console.error('[CRITICAL] unhandledRejection:', reason);
+  console.error('[CRITICAL] supervisor unhandledRejection:', reason);
 });
 
 // ============================================
-// LEADERBOARD STATE (gedeeld met workers via IPC)
+// LEADERBOARD STATE (gedeeld via IPC met workers)
 // ============================================
+const KITS = ['Diamond Smp', 'Sword', 'Mace', 'Crystal PVP', 'Spear Mace'];
+
 const allLeaderboards = {};
 for (const kit of KITS) allLeaderboards[kit] = [];
 
@@ -25,6 +26,7 @@ for (const kit of KITS) allLeaderboards[kit] = [];
 // WORKER MANAGEMENT
 // ============================================
 const workers = {}; // role -> child
+const restartCount = {}; // role -> aantal herstarts
 
 function spawnWorker(role) {
   console.log(`[supervisor] ${role} starten...`);
@@ -34,7 +36,9 @@ function spawnWorker(role) {
   });
 
   workers[role] = child;
+  restartCount[role] = restartCount[role] || 0;
 
+  // ---- IPC: leaderboard updates + crash meldingen ----
   child.on('message', (msg) => {
     if (!msg || !msg.type) return;
 
@@ -54,10 +58,22 @@ function spawnWorker(role) {
     }
   });
 
+  // ---- Herstart bij exit (crash of normaal einde) ----
   child.on('exit', (code, signal) => {
-    console.log(`[supervisor] ${role} gestopt (code ${code}, signal ${signal}), herstart in 5s`);
     workers[role] = null;
-    setTimeout(() => spawnWorker(role), 5000);
+    restartCount[role] += 1;
+
+    const delay = Math.min(5000 * restartCount[role], 60000);
+    console.log(
+      `[supervisor] ${role} gestopt (code ${code}, signal ${signal}) — herstart in ${delay / 1000}s`
+    );
+
+    setTimeout(() => spawnWorker(role), delay);
+  });
+
+  // ---- Vang fouten bij het forken zelf op ----
+  child.on('error', (err) => {
+    console.error(`[supervisor] ${role} fork error:`, err.message);
   });
 }
 
@@ -65,7 +81,7 @@ spawnWorker('keepalive');
 spawnWorker('kiddo');
 
 // ============================================
-// EXPRESS API (blijft altijd draaien)
+// EXPRESS API (blijft ALTIJD draaien)
 // ============================================
 const app = express();
 app.use(cors());
@@ -75,17 +91,18 @@ const PORT = process.env.PORT || 3000;
 app.get('/ping', (req, res) => res.status(200).send('OK'));
 
 app.get('/', (req, res) => {
-  // Live spelerscount — alleen beschikbaar als kiddo-worker draait
-  // (voor nu: leeg, want worker-state zit in apart proces)
-  res.status(200).send('0');
+  res.status(200).send('OK');
 });
 
 app.get('/status', (req, res) => {
+  const workerStatus = {};
+  for (const role of Object.keys(workers)) {
+    workerStatus[role] = workers[role] ? 'running' : 'restarting';
+  }
+
   res.json({
-    workers: {
-      keepalive: workers.keepalive ? 'running' : 'restarting',
-      kiddo: workers.kiddo ? 'running' : 'restarting',
-    },
+    workers: workerStatus,
+    restartCount,
     leaderboards: allLeaderboards,
   });
 });
