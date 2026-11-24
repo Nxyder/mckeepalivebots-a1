@@ -27,4 +27,7 @@ module.exports = {
   LEADERBOARD_REFRESH_MS: 5 * 60 * 1000,
   KIT_QUERY_DELAY_MS: 3000,
   AUTH_DELAY_MS: 2000,
+
+  // Keepalive: stuur elke 10s een packet naar de server
+  KEEPALIVE_INTERVAL_MS: 10000,
 };
